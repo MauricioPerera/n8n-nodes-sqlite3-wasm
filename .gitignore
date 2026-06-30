@@ -1,7 +1,7 @@
 dist
 node_modules
 *.tgz
-.dev-*-report.md
+.dev-*
 .install*
 npm-debug.log*
 .npmrc
