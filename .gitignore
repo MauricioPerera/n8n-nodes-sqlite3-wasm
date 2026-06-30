@@ -4,3 +4,4 @@ node_modules
 .dev-*-report.md
 .install*
 npm-debug.log*
+.npmrc
