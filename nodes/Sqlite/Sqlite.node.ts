@@ -120,6 +120,34 @@ export class Sqlite implements INodeType {
 				default: 'select',
 			},
 			{
+				displayName: 'Database File Path Override',
+				name: 'databasePathOverride',
+				type: 'string',
+				default: '',
+				placeholder: '/absolute/path/to/database.sqlite',
+				displayOptions: {
+					show: {
+						resource: ['database'],
+					},
+				},
+				description:
+					"Full absolute path to a database file. Overrides the credential's Database File Path and Base Directory. Avoid exposing this to AI agents.",
+			},
+			{
+				displayName: 'Database',
+				name: 'database',
+				type: 'string',
+				default: '',
+				placeholder: 'sales.db or sub/dir/app.db',
+				displayOptions: {
+					show: {
+						resource: ['database'],
+					},
+				},
+				description:
+					"Database file inside the credential's Base Directory (e.g. sales.db or sub/dir/app.db). Resolved INSIDE the Base Directory; cannot escape it. Ignored if Database File Path Override is set.",
+			},
+			{
 				displayName: 'Read Only',
 				name: 'readOnly',
 				type: 'boolean',

@@ -1,6 +1,6 @@
 {
     "name": "n8n-nodes-sqlite3-wasm",
-    "version": "1.0.1",
+    "version": "1.1.0",
     "description": "n8n community node to run SQL against a local SQLite database via node-sqlite3-wasm",
     "license": "MIT",
     "homepage": "https://github.com/MauricioPerera/n8n-nodes-sqlite3-wasm#readme",

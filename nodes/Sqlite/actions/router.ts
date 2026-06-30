@@ -3,6 +3,7 @@ import type { IDataObject, IExecuteFunctions, INodeExecutionData } from 'n8n-wor
 import { NodeOperationError } from 'n8n-workflow';
 
 import { closeConnection, createConnection } from '../transport/connection';
+import { resolveDatabasePath } from '../helpers/resolvePath';
 import { normalizeRow } from '../helpers/normalize';
 import { detectQueryKind } from '../helpers/queryBuilder';
 import { isDestructiveOperation } from '../helpers/security';
@@ -104,19 +105,30 @@ function guardDestructive(sql: string, confirmDestructive: boolean): void {
 }
 
 /**
- * Engine for the SQLite node: open one connection, route each input item to its
- * operation builder, execute, and assemble output aligned with the input.
+ * Engine for the SQLite node: resolve the target database per item, open one
+ * connection per resolved path, route each input item to its operation builder,
+ * execute, and assemble output aligned with the input.
+ *
+ * Database selection (per item, first wins — see `resolveDatabasePath`):
+ * - `databasePathOverride` (node) — an absolute path that overrides everything.
+ * - `database` (node) + `baseDirectory` (credential) — a file sandboxed inside
+ *   the Base Directory (anti-path-traversal); different items may pick different
+ *   files, so multiple databases can be touched in one run.
+ * - `databasePath` (credential) — the legacy single absolute path.
  *
  * Execution modes:
  * - `independent`: each item is its own statement; per-item continueOnFail;
  *   output aligned with the input (A4).
  * - `transaction`: all items inside BEGIN/COMMIT; results are buffered and only
  *   flushed after a successful COMMIT (A4: rolled-back rows are never reported
- *   as success). On any failure the transaction is rolled back globally.
- * - `singleMultiRow`: only insert; one multi-row INSERT for all items.
+ *   as success). BEGIN/COMMIT/ROLLBACK are issued to every opened connection,
+ *   so atomicity is per-database (a single-DB run is identical to before). On
+ *   any failure every opened connection is rolled back.
+ * - `singleMultiRow`: only insert; one multi-row INSERT for all items, targeting
+ *   the database resolved from item 0.
  *
  * Security (independent, always applied):
- * - `readOnly`: when true, the connection is opened read-only at the engine
+ * - `readOnly`: when true, each connection is opened read-only at the engine
  *   level (node-sqlite3-wasm rejects every write). Strong guarantee for AI-agent
  *   exposure. See `createConnection(path, { readOnly })`.
  * - `confirmDestructive`: when false, statements flagged by
@@ -131,11 +143,11 @@ export async function routeSqlite(this: IExecuteFunctions): Promise<INodeExecuti
 		return [[]];
 	}
 
-	const creds = await this.getCredentials<{ databasePath?: string }>('sqliteApi');
-	const databasePath = creds.databasePath;
-	if (typeof databasePath !== 'string' || databasePath.length === 0) {
-		throw new NodeOperationError(this.getNode(), 'SQLite credential is missing a databasePath');
-	}
+	const creds = await this.getCredentials<{ databasePath?: string; baseDirectory?: string }>(
+		'sqliteApi',
+	);
+	const credentialDatabasePath = creds.databasePath ?? '';
+	const baseDirectory = creds.baseDirectory ?? '';
 
 	const mode = this.getNodeParameter('executionMode', 0, 'independent') as ExecutionMode;
 	const operation = this.getNodeParameter('operation', 0) as string;
@@ -145,19 +157,65 @@ export async function routeSqlite(this: IExecuteFunctions): Promise<INodeExecuti
 
 	const returnData: INodeExecutionData[] = [];
 
-	let db: Database;
-	try {
-		db = createConnection(databasePath, { readOnly });
-	} catch (error) {
-		throw new NodeOperationError(this.getNode(), error as Error, {
-			message: 'Failed to open the SQLite database',
-		});
-	}
+	// Multi-database support: each item may resolve to a different database file
+	// (via expressions on the node's `database` / `databasePathOverride` fields,
+	// combined with the credential's `baseDirectory`). Open one connection per
+	// resolved path lazily, reuse it across items that share the path, and close
+	// every opened connection at the end. The single-path legacy case (only
+	// `databasePath` set) opens exactly one connection — identical to before.
+	const connections = new Map<string, Database>();
+	const inTransaction = mode === 'transaction';
+
+	/** Resolve the absolute DB path for one item from credential + node params. */
+	const resolveForItem = (itemIndex: number): string => {
+		const database = this.getNodeParameter('database', itemIndex, '') as string;
+		const override = this.getNodeParameter('databasePathOverride', itemIndex, '') as string;
+		return resolveDatabasePath({ credentialDatabasePath, baseDirectory, database, override });
+	};
+
+	/** Get an opened connection for `resolvedPath`, opening it lazily. */
+	const getOrOpen = (resolvedPath: string): Database => {
+		const existing = connections.get(resolvedPath);
+		if (existing) {
+			return existing;
+		}
+		const db = createConnection(resolvedPath, { readOnly });
+		// Record before BEGIN so a failed BEGIN still gets cleaned up by closeAll.
+		connections.set(resolvedPath, db);
+		if (inTransaction) {
+			// BEGIN per connection so each opened DB participates in the
+			// transaction; COMMIT/ROLLBACK are issued to all at the end.
+			db.exec('BEGIN');
+		}
+		return db;
+	};
+
+	/** Roll back every opened connection (best-effort; surface the original error). */
+	const rollbackAll = (): void => {
+		for (const db of connections.values()) {
+			try {
+				db.exec('ROLLBACK');
+			} catch {
+				// best-effort
+			}
+		}
+	};
+
+	/** Close every opened connection idempotently. */
+	const closeAll = (): void => {
+		for (const db of connections.values()) {
+			closeConnection(db);
+		}
+		connections.clear();
+	};
 
 	try {
 		// --- single multi-row INSERT: one statement for all items ---
+		// A single multi-row INSERT targets one database; resolve it from item 0
+		// (consistent with resolveInsertColumns, which also uses item 0).
 		if (operation === 'insert' && mode === 'singleMultiRow') {
 			try {
+				const db = getOrOpen(resolveForItem(0));
 				const insertColumns = resolveInsertColumns(this, 0, items);
 				const built = buildInsertMultiRowQuery(this, items, insertColumns);
 				guardDestructive(built.sql, confirmDestructive);
@@ -181,15 +239,11 @@ export async function routeSqlite(this: IExecuteFunctions): Promise<INodeExecuti
 
 		// --- per-item path (independent + transaction) ---
 		const insertColumns = operation === 'insert' ? resolveInsertColumns(this, 0, items) : [];
-		const inTransaction = mode === 'transaction';
 		const buffer: INodeExecutionData[] = [];
-
-		if (inTransaction) {
-			db.exec('BEGIN');
-		}
 
 		for (let i = 0; i < items.length; i++) {
 			try {
+				const db = getOrOpen(resolveForItem(i));
 				const built = buildPerItemQuery(operation, this, i, insertColumns);
 				guardDestructive(built.sql, confirmDestructive);
 				const outcome = runStatement(db, built, expectRowsFor(operation, built));
@@ -206,11 +260,7 @@ export async function routeSqlite(this: IExecuteFunctions): Promise<INodeExecuti
 			} catch (error) {
 				if (inTransaction) {
 					// Global rollback: do not report buffered (now-rolled-back) rows.
-					try {
-						db.exec('ROLLBACK');
-					} catch {
-						// best-effort rollback; the original error is the one to surface
-					}
+					rollbackAll();
 					if (continueOnFail) {
 						returnData.push({
 							json: { error: (error as Error).message },
@@ -233,29 +283,27 @@ export async function routeSqlite(this: IExecuteFunctions): Promise<INodeExecuti
 		}
 
 		if (inTransaction) {
+			// COMMIT every opened connection; if any fails, roll back all and
+			// surface the error without flushing the buffer (A4).
 			try {
-				db.exec('COMMIT');
-			} catch (error) {
-				try {
-					db.exec('ROLLBACK');
-				} catch {
-					// best-effort
+				for (const db of connections.values()) {
+					db.exec('COMMIT');
 				}
+			} catch (error) {
+				rollbackAll();
 				throw new NodeOperationError(this.getNode(), error as Error, {
 					message: 'Transaction COMMIT failed',
 				});
 			}
-			// Flush only after a successful COMMIT (A4).
-			for (const item of buffer) {
-				returnData.push(item);
-			}
-		} else {
-			for (const item of buffer) {
-				returnData.push(item);
-			}
+		}
+		// Flush after a successful COMMIT (transaction) or as items completed
+		// (independent). A thrown COMMIT skips this, so rolled-back rows are
+		// never reported as success (A4).
+		for (const item of buffer) {
+			returnData.push(item);
 		}
 	} finally {
-		closeConnection(db);
+		closeAll();
 	}
 
 	return [returnData];

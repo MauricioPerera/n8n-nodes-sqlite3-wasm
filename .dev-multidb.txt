@@ -1,0 +1,33 @@
+Eres un desarrollador senior de nodos n8n. v1.1.0 del nodo SQLite: permitir usar MULTIPLES bases de datos desde una sola credencial. Construye sobre el nodo verificado (101 tests). Es RETROCOMPATIBLE: credenciales existentes (solo databasePath) deben seguir funcionando igual.
+
+Working dir: D:/Repo/sqlite node/n8n-nodes-sqlite3-wasm
+Estructura: credentials/SqliteApi.credentials.ts (cred `sqliteApi`, campo `databasePath`); nodes/Sqlite/transport/connection.ts (`createConnection(databasePath, {readOnly?,busyTimeoutMs?})`, `closeConnection`); nodes/Sqlite/actions/router.ts (motor: lee credencial, abre conexion, loop items, dispatch, flush/close); nodes/Sqlite/helpers/normalize.ts (escapeSqlIdentifier, etc).
+
+OBJETIVO — dos formas (ambas) de elegir la DB:
+
+1. credentials/SqliteApi.credentials.ts: agregar campo OPCIONAL `baseDirectory` (string, default '', descripcion: "Optional absolute directory. When set, each node can pick a database file inside it via the node's Database field. Leave empty to use a single Database File Path."). Mantener `databasePath` (ahora OPCIONAL: puede quedar vacio si se usa baseDirectory + Database por nodo).
+
+2. nodes/Sqlite/Sqlite.node.ts: agregar DOS parametros opcionales de nodo, visibles para resource database / todas las operaciones (ponelos en una collection "Database Selection" o como campos top-level con buena descripcion):
+   - `database` (string, default ''): "Database file inside the credential's Base Directory (e.g. sales.db or sub/dir/app.db). Resolved INSIDE the Base Directory; cannot escape it. Ignored if Database File Path Override is set."
+   - `databasePathOverride` (string, default ''): "Full absolute path to a database file. Overrides the credential's path and Base Directory. Avoid exposing this to AI agents."
+
+3. nodes/Sqlite/transport/connection.ts (o un helper nuevo nodes/Sqlite/helpers/resolvePath.ts): funcion PURA gateable `resolveDatabasePath(opts: {credentialDatabasePath?: string, baseDirectory?: string, database?: string, override?: string}): string`:
+   - Si `override` no vacio -> debe ser path absoluto (path.isAbsolute); si no, error claro. Devuelve override.
+   - Else si `database` no vacio -> requiere `baseDirectory` no vacio y absoluto (si no, error claro "Database field requires a Base Directory in the credential"). resolved = path.resolve(baseDirectory, database). VALIDAR que resolved queda DENTRO de baseDirectory (anti path-traversal: normalizar ambos y checar que resolved === baseDir o empieza con baseDir + path.sep; si database trae '..' que escapa -> error claro "resolved path escapes the base directory"). Devuelve resolved.
+   - Else -> requiere `credentialDatabasePath` no vacio y absoluto; devuelve eso. Si vacio -> error claro ("no database configured: set Database File Path, or Base Directory + Database").
+   - Implementala con property-test congelado + run_integration_gate (run_ephemeral_agent NO va en Windows; implementa vos; complejidad bajo umbral 11/4/6/41). Casos del test: override absoluto OK; override relativo lanza; database+baseDir resuelve dentro; database con '../..' que escapa lanza; database sin baseDir lanza; solo databasePath (retrocompat) OK; nada configurado lanza.
+
+4. nodes/Sqlite/actions/router.ts: por item, leer credencial {databasePath, baseDirectory} y params de nodo {database (getNodeParameter con default ''), databasePathOverride (default '')}, llamar resolveDatabasePath, y abrir la conexion para ESE path. Como distintos items pueden resolver a distintas DB (si se usan expresiones), mantene un MAP de conexiones por path resuelto (abrir lazy, reusar, cerrar TODAS al final con closeConnection). El readOnly/busyTimeout y los guards (confirmDestructive) siguen igual. Las operaciones no cambian. La validacion de path absoluto que ya hace createConnection se mantiene (resolveDatabasePath ya garantiza absoluto).
+   - NOTA: el directorio padre debe existir (comportamiento actual: NO crear arboles). Mantener.
+
+DEFINICION DE HECHO:
+- Test de integracion (nodes/Sqlite/__tests__/multidb.integration.test.ts) contra dirs temporales reales:
+  a) baseDirectory + database 'a.db' y otro item database 'b.db' -> crea ambas dentro del baseDir, opera independientes.
+  b) override a un path absoluto fuera del baseDir -> usa ese.
+  c) database con traversal '../escape.db' -> lanza error claro, NO escribe fuera.
+  d) RETROCOMPAT: credencial con solo databasePath (sin baseDirectory, sin database) -> identico a hoy.
+- NO rompas los 101 tests. Corre vos mismo y pega REAL: tsc --noEmit (exit 0); jest (verde, antes/despues); y el require del dist: tras build, `node -e "require('./dist/nodes/Sqlite/Sqlite.node.js')"` -> LOAD OK (para cazar imports rotos).
+- tsconfig: si tiene incremental:true, ponelo en false (evita que el build omita modulos del dist). Borra dist antes de rebuild.
+- Leer params opcionales SIEMPRE con getNodeParameter de 3 args (con default).
+
+Al terminar escribe .dev-multidb-report.md con: cambios, veredicto gate (real), tsc/jest reales (antes/despues), require dist OK, que test cubre a-d, y desviaciones. Numeros reales; si falla, decilo.
