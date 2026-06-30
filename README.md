@@ -54,6 +54,8 @@ This node is enabled as an **AI tool** (`usableAsTool`), with two safeguards so 
 2. Add the **SQLite** node, pick a resource/operation.
 3. For agent/AI use, enable **Read-only**.
 
+Ready-to-import example workflows (Insert & Read, Upsert sync, Safe parameterized query) live in [`examples/`](examples/).
+
 ## License
 
 [MIT](LICENSE.md)

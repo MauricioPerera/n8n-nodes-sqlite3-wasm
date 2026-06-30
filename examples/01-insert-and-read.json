@@ -1,0 +1,81 @@
+{
+  "name": "SQLite — Insert & Read",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "trg-01",
+      "name": "When clicking Execute",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [0, 0]
+    },
+    {
+      "parameters": {
+        "content": "## SQLite — Insert & Read\n\nCreates a `products` table, inserts a few rows mapped from the **Sample Data** node, then reads them back.\n\n**Before running:** open each SQLite node and pick your **SQLite API** credential (Database File Path = absolute path to your .db).",
+        "height": 220,
+        "width": 360
+      },
+      "id": "note-01",
+      "name": "How to use",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [-40, -260]
+    },
+    {
+      "parameters": {
+        "resource": "database",
+        "operation": "executeQuery",
+        "query": "CREATE TABLE IF NOT EXISTS products (id INTEGER PRIMARY KEY, name TEXT, price REAL, in_stock INTEGER)"
+      },
+      "id": "sql-create-01",
+      "name": "Create Table",
+      "type": "n8n-nodes-sqlite3-wasm.sqlite",
+      "typeVersion": 1,
+      "position": [220, 0],
+      "credentials": { "sqliteApi": { "id": "REPLACE_ME", "name": "SQLite API" } }
+    },
+    {
+      "parameters": {
+        "jsCode": "return [\n  { json: { name: 'Keyboard', price: 49.9, in_stock: true } },\n  { json: { name: 'Mouse', price: 19.5, in_stock: true } },\n  { json: { name: 'Monitor', price: 199.0, in_stock: false } }\n];"
+      },
+      "id": "code-01",
+      "name": "Sample Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [440, 0]
+    },
+    {
+      "parameters": {
+        "resource": "database",
+        "operation": "insert",
+        "table": { "__rl": true, "mode": "name", "value": "products" }
+      },
+      "id": "sql-insert-01",
+      "name": "Insert Rows",
+      "type": "n8n-nodes-sqlite3-wasm.sqlite",
+      "typeVersion": 1,
+      "position": [660, 0],
+      "credentials": { "sqliteApi": { "id": "REPLACE_ME", "name": "SQLite API" } }
+    },
+    {
+      "parameters": {
+        "resource": "database",
+        "operation": "executeQuery",
+        "query": "SELECT id, name, price, in_stock FROM products ORDER BY id"
+      },
+      "id": "sql-read-01",
+      "name": "Read All",
+      "type": "n8n-nodes-sqlite3-wasm.sqlite",
+      "typeVersion": 1,
+      "position": [880, 0],
+      "credentials": { "sqliteApi": { "id": "REPLACE_ME", "name": "SQLite API" } }
+    }
+  ],
+  "connections": {
+    "When clicking Execute": { "main": [[{ "node": "Create Table", "type": "main", "index": 0 }]] },
+    "Create Table": { "main": [[{ "node": "Sample Data", "type": "main", "index": 0 }]] },
+    "Sample Data": { "main": [[{ "node": "Insert Rows", "type": "main", "index": 0 }]] },
+    "Insert Rows": { "main": [[{ "node": "Read All", "type": "main", "index": 0 }]] }
+  },
+  "settings": {}
+}

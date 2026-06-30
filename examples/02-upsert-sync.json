@@ -1,0 +1,82 @@
+{
+  "name": "SQLite — Upsert (sync by key)",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "trg-02",
+      "name": "When clicking Execute",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [0, 0]
+    },
+    {
+      "parameters": {
+        "content": "## SQLite — Upsert (sync by key)\n\nIdempotent sync: matches on `id`. Existing rows are **updated**, new rows are **inserted** — no duplicates. Re-run after changing values in **Incoming Rows** to see the update path.\n\n**Before running:** set your **SQLite API** credential on each SQLite node.\n\n> The match column needs a PRIMARY KEY / UNIQUE constraint (see Create Table).",
+        "height": 260,
+        "width": 360
+      },
+      "id": "note-02",
+      "name": "How to use",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [-40, -300]
+    },
+    {
+      "parameters": {
+        "resource": "database",
+        "operation": "executeQuery",
+        "query": "CREATE TABLE IF NOT EXISTS customers (id INTEGER PRIMARY KEY, name TEXT, email TEXT, plan TEXT)"
+      },
+      "id": "sql-create-02",
+      "name": "Create Table",
+      "type": "n8n-nodes-sqlite3-wasm.sqlite",
+      "typeVersion": 1,
+      "position": [220, 0],
+      "credentials": { "sqliteApi": { "id": "REPLACE_ME", "name": "SQLite API" } }
+    },
+    {
+      "parameters": {
+        "jsCode": "return [\n  { json: { id: 1, name: 'Alice', email: 'alice@acme.com', plan: 'pro' } },\n  { json: { id: 2, name: 'Bob', email: 'bob@acme.com', plan: 'free' } }\n];"
+      },
+      "id": "code-02",
+      "name": "Incoming Rows",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [440, 0]
+    },
+    {
+      "parameters": {
+        "resource": "database",
+        "operation": "upsert",
+        "table": { "__rl": true, "mode": "name", "value": "customers" },
+        "matchColumns": ["id"]
+      },
+      "id": "sql-upsert-02",
+      "name": "Upsert Rows",
+      "type": "n8n-nodes-sqlite3-wasm.sqlite",
+      "typeVersion": 1,
+      "position": [660, 0],
+      "credentials": { "sqliteApi": { "id": "REPLACE_ME", "name": "SQLite API" } }
+    },
+    {
+      "parameters": {
+        "resource": "database",
+        "operation": "executeQuery",
+        "query": "SELECT id, name, email, plan FROM customers ORDER BY id"
+      },
+      "id": "sql-read-02",
+      "name": "Read All",
+      "type": "n8n-nodes-sqlite3-wasm.sqlite",
+      "typeVersion": 1,
+      "position": [880, 0],
+      "credentials": { "sqliteApi": { "id": "REPLACE_ME", "name": "SQLite API" } }
+    }
+  ],
+  "connections": {
+    "When clicking Execute": { "main": [[{ "node": "Create Table", "type": "main", "index": 0 }]] },
+    "Create Table": { "main": [[{ "node": "Incoming Rows", "type": "main", "index": 0 }]] },
+    "Incoming Rows": { "main": [[{ "node": "Upsert Rows", "type": "main", "index": 0 }]] },
+    "Upsert Rows": { "main": [[{ "node": "Read All", "type": "main", "index": 0 }]] }
+  },
+  "settings": {}
+}

@@ -1,0 +1,71 @@
+{
+  "name": "SQLite — Safe Parameterized Query",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "trg-03",
+      "name": "When clicking Execute",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [0, 0]
+    },
+    {
+      "parameters": {
+        "content": "## SQLite — Safe Parameterized Query\n\nShows the **safe** way to run raw SQL: use `$1, $2 …` placeholders in the query and put the values in **Replacements** (a JSON array). Values are bound, never string-concatenated — no SQL injection.\n\nNote: each Execute Query node runs **one** SQL statement, so Create and Seed are separate nodes.\n\n**Before running:** set your **SQLite API** credential on each SQLite node.",
+        "height": 280,
+        "width": 380
+      },
+      "id": "note-03",
+      "name": "How to use",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [-40, -320]
+    },
+    {
+      "parameters": {
+        "resource": "database",
+        "operation": "executeQuery",
+        "query": "CREATE TABLE IF NOT EXISTS products (id INTEGER PRIMARY KEY, name TEXT, price REAL, in_stock INTEGER)"
+      },
+      "id": "sql-create-03",
+      "name": "Create Table",
+      "type": "n8n-nodes-sqlite3-wasm.sqlite",
+      "typeVersion": 1,
+      "position": [220, 0],
+      "credentials": { "sqliteApi": { "id": "REPLACE_ME", "name": "SQLite API" } }
+    },
+    {
+      "parameters": {
+        "resource": "database",
+        "operation": "executeQuery",
+        "query": "INSERT OR IGNORE INTO products (id,name,price,in_stock) VALUES (1,'Keyboard',49.9,1),(2,'Mouse',19.5,1),(3,'Monitor',199.0,0)"
+      },
+      "id": "sql-seed-03",
+      "name": "Seed Rows",
+      "type": "n8n-nodes-sqlite3-wasm.sqlite",
+      "typeVersion": 1,
+      "position": [440, 0],
+      "credentials": { "sqliteApi": { "id": "REPLACE_ME", "name": "SQLite API" } }
+    },
+    {
+      "parameters": {
+        "resource": "database",
+        "operation": "executeQuery",
+        "query": "SELECT id, name, price FROM products WHERE price >= $1 AND in_stock = $2 ORDER BY price DESC",
+        "replacementsJson": "[20, 1]"
+      },
+      "id": "sql-query-03",
+      "name": "Query (price >= 20, in stock)",
+      "type": "n8n-nodes-sqlite3-wasm.sqlite",
+      "typeVersion": 1,
+      "position": [660, 0],
+      "credentials": { "sqliteApi": { "id": "REPLACE_ME", "name": "SQLite API" } }
+    }
+  ],
+  "connections": {
+    "When clicking Execute": { "main": [[{ "node": "Create Table", "type": "main", "index": 0 }]] },
+    "Create Table": { "main": [[{ "node": "Seed Rows", "type": "main", "index": 0 }]] },
+    "Seed Rows": { "main": [[{ "node": "Query (price >= 20, in stock)", "type": "main", "index": 0 }]] }
+  },
+  "settings": {}
+}
