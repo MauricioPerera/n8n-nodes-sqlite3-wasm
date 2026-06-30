@@ -1,0 +1,6 @@
+dist
+node_modules
+*.tgz
+.dev-*-report.md
+.install*
+npm-debug.log*
