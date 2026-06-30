@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.1
+
+- Exclude `tsconfig.tsbuildinfo` from the published package (redirect TS incremental build info out of `dist`). No functional changes.
+
 ## 1.0.0
 
 Initial release.
